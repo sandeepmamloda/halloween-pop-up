@@ -1,0 +1,304 @@
+<html lang="en"><head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Halloween Pop-up</title>
+<link href="https://fonts.googleapis.com/css2?family=Creepster&amp;display=swap" rel="stylesheet">
+<style>
+:root{color-scheme:dark;--bg:#0a0612;--fg:#ffe9c7;--orange:#ff7a12;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+*{box-sizing:border-box}
+html,body{height:100%;margin:0;background:var(--bg);color:var(--fg);font-family:Georgia,'Times New Roman',serif;overflow:hidden}
+canvas{position:fixed;inset:0;width:100%;height:100%;display:block;cursor:default}
+#out small{font-size:12px;opacity:.7;max-width:90%;text-shadow:0 2px 8px #000}
+body::after{content:'';position:fixed;inset:0;pointer-events:none;background:radial-gradient(ellipse at 50% 55%,transparent 40%,rgba(0,0,0,.7) 100%)}
+.ui{position:fixed;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:18px;text-align:center;padding:24px;pointer-events:none}
+.ui>*{pointer-events:auto}
+h1{font-family:Creepster,fantasy;font-weight:400;font-size:clamp(40px,9vw,88px);margin:0;letter-spacing:2px;color:var(--orange);text-shadow:0 0 24px rgba(255,122,18,.55),0 4px 0 #3a1500}
+p{margin:0;font-size:clamp(16px,2.6vw,20px);max-width:32ch;line-height:1.5;text-shadow:0 2px 10px #000}
+button{font:inherit;font-size:18px;color:var(--bg);background:var(--orange);border:0;border-radius:999px;padding:14px 32px;cursor:pointer;box-shadow:0 0 28px rgba(255,122,18,.5);transition:transform .15s}
+button:hover{transform:scale(1.06)}
+button:focus-visible{outline:3px solid var(--fg);outline-offset:3px}
+#intro{transition:opacity .4s,transform .4s}
+#intro.gone{opacity:0;transform:translateY(-20px);pointer-events:none}
+#boo{position:fixed;left:0;right:0;top:calc(env(safe-area-inset-top,0px) + 4vh);text-align:center;pointer-events:none;opacity:0}
+#boo h1{font-size:clamp(72px,18vw,190px);color:#fff3d6}
+#boo.show{animation:boo 1.6s ease-out forwards}
+@keyframes boo{0%{opacity:0;transform:scale(.2) rotate(-8deg)}18%{opacity:1;transform:scale(1.25) rotate(3deg)}30%{transform:scale(1) rotate(0)}100%{opacity:1;transform:scale(1)}}
+#out{position:fixed;left:0;right:0;bottom:calc(env(safe-area-inset-bottom,0px) + 4vh);display:flex;flex-direction:column;align-items:center;gap:14px;opacity:0;pointer-events:none;transition:opacity .5s}
+#out.show{opacity:1}
+#out.show>*{pointer-events:auto}
+#flash{position:fixed;inset:0;background:#ffb347;opacity:0;pointer-events:none}
+#flash.go{animation:fl .45s ease-out}
+@keyframes fl{0%{opacity:.7}100%{opacity:0}}
+@media (prefers-reduced-motion:reduce){#boo.show{animation:none;opacity:1}#flash.go{animation:none}}
+</style>
+</head>
+<body>
+<canvas id="c" width="2350" height="1066" style="cursor: default;"></canvas>
+<div id="flash"></div>
+<div class="ui" id="intro">
+  <h1>Trick or treat?</h1>
+  <p>Something is buried in the graveyard. Dig it up if you dare.</p>
+  <button id="open">Dig it up</button>
+</div>
+<div id="boo"><h1>Boo!</h1></div>
+<div id="out"><p>Happy Halloween!</p><button id="close">Bury it again</button><small>Click the pumpkin to make it hop · move your mouse to disturb the bats</small></div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script>
+const R=Math.random, clamp=(x,a=0,b=1)=>Math.min(b,Math.max(a,x)), ease=x=>1-Math.pow(1-clamp(x),3);
+const cv=(w,h)=>{const c=document.createElement('canvas');c.width=w;c.height=h;return c};
+const V=(x,y,z)=>new THREE.Vector3(x,y,z);
+
+const renderer=new THREE.WebGLRenderer({canvas:document.getElementById('c'),antialias:true});
+renderer.setPixelRatio(Math.min(devicePixelRatio,2));
+renderer.toneMapping=THREE.ACESFilmicToneMapping;renderer.toneMappingExposure=1.3;
+renderer.shadowMap.enabled=true;renderer.shadowMap.type=THREE.PCFSoftShadowMap;
+const scene=new THREE.Scene();
+const skc=cv(2,256),skx=skc.getContext('2d'),skg=skx.createLinearGradient(0,0,0,256);
+[[0,'#04020a'],[.5,'#120a26'],[.82,'#2e1634'],[1,'#5a2634']].forEach(a=>skg.addColorStop(...a));skx.fillStyle=skg;skx.fillRect(0,0,2,256);
+scene.background=new THREE.CanvasTexture(skc);
+scene.fog=new THREE.Fog(0x241438,5,24);
+const camera=new THREE.PerspectiveCamera(50,1,.1,60);
+const aniso=renderer.capabilities.getMaxAnisotropy();
+
+const glow=(()=>{const c=cv(64,64),x=c.getContext('2d'),g=x.createRadialGradient(32,32,0,32,32,32);
+  g.addColorStop(0,'rgba(255,255,255,1)');g.addColorStop(.35,'rgba(255,255,255,.4)');g.addColorStop(1,'rgba(255,255,255,0)');
+  x.fillStyle=g;x.fillRect(0,0,64,64);return new THREE.CanvasTexture(c)})();
+// soft billowy smoke texture (many overlapping blobs)
+const smokeTex=(()=>{const c=cv(128,128),x=c.getContext('2d');
+  for(let i=0;i<16;i++){const a=R()*6.28,d=R()*26,px=64+Math.cos(a)*d,py=64+Math.sin(a)*d,r=22+R()*22,g=x.createRadialGradient(px,py,0,px,py,r);
+    g.addColorStop(0,'rgba(255,255,255,.22)');g.addColorStop(1,'rgba(255,255,255,0)');x.fillStyle=g;x.fillRect(0,0,128,128)}
+  const m=x.createRadialGradient(64,64,10,64,64,64);m.addColorStop(0,'rgba(0,0,0,0)');m.addColorStop(1,'rgba(0,0,0,1)');
+  x.globalCompositeOperation='destination-out';x.fillStyle=m;x.fillRect(0,0,128,128);return new THREE.CanvasTexture(c)})();
+
+const ambient=new THREE.AmbientLight(0x6a4fa0,.55);scene.add(ambient);
+const moonLight=new THREE.DirectionalLight(0x9bb0ff,.9);moonLight.position.set(-4,6,5);scene.add(moonLight);
+moonLight.castShadow=true;moonLight.shadow.mapSize.set(1024,1024);
+{const c=moonLight.shadow.camera;c.left=c.bottom=-9;c.right=c.top=9;c.far=25;moonLight.shadow.bias=-.001}
+
+// ---------- moon
+const mc=cv(512,512),m=mc.getContext('2d');m.fillStyle='#f1dfbd';m.fillRect(0,0,512,512);
+for(let i=0;i<70;i++){const x=R()*512,y=R()*512,r=6+R()*36,g=m.createRadialGradient(x,y,0,x,y,r);
+  g.addColorStop(0,'rgba(150,120,90,.35)');g.addColorStop(.8,'rgba(150,120,90,.2)');g.addColorStop(1,'rgba(255,240,210,.25)');m.fillStyle=g;m.beginPath();m.arc(x,y,r,0,7);m.fill()}
+const moon=new THREE.Mesh(new THREE.SphereGeometry(2,48,32),new THREE.MeshBasicMaterial({map:new THREE.CanvasTexture(mc),fog:false}));
+moon.position.set(-3.2,3,-10);moon.rotation.y=2;scene.add(moon);
+const halo=new THREE.Sprite(new THREE.SpriteMaterial({map:glow,color:0xffb060,transparent:true,opacity:.5,blending:THREE.AdditiveBlending,fog:false}));
+halo.scale.set(14,14,1);halo.position.copy(moon.position);scene.add(halo);
+const clouds=[];for(let i=0;i<5;i++){const s=new THREE.Sprite(new THREE.SpriteMaterial({map:smokeTex,color:0x0a0612,transparent:true,opacity:.8,fog:false,depthWrite:false}));
+  s.scale.set(9+R()*5,2.4+R(),1);s.position.set(-10+i*4.5,2+R()*2.6,-9.5);scene.add(s);clouds.push(s)}
+
+// ---------- terrain
+const hf=(x,z)=>{const r=Math.hypot(x,z);
+  return (.2*Math.sin(x*.5+1)*Math.cos(z*.4)+.1*Math.sin(x*1.3+z*.9))*clamp(r/3)+.2*Math.exp(-Math.pow((r-1.55)/.5,2))-.14*Math.exp(-r*r/1.1)+.03*Math.pow(Math.max(0,r-9),1.5)};
+const gc=cv(512,512),gx=gc.getContext('2d');gx.fillStyle='#1a1028';gx.fillRect(0,0,512,512);
+for(let i=0;i<7000;i++){gx.fillStyle=`rgba(${['60,45,85','8,4,14','52,56,34'][i%3]},${.2+R()*.4})`;gx.fillRect(R()*512,R()*512,1+R()*2,2+R()*6)}
+const gt=new THREE.CanvasTexture(gc);gt.wrapS=gt.wrapT=THREE.RepeatWrapping;gt.repeat.set(14,14);gt.anisotropy=aniso;
+const gg=new THREE.PlaneGeometry(60,60,150,150).rotateX(-Math.PI/2),gp=gg.attributes.position,gcol=[];
+for(let i=0;i<gp.count;i++){const x=gp.getX(i),z=gp.getZ(i),r=Math.hypot(x,z),k=.75+.25*Math.sin(x*.7+z*.3)*Math.cos(z*.6)+.1*R(),d=Math.exp(-r*r/6);
+  gp.setY(i,hf(x,z));gcol.push(k*(1+.5*d),k*(1-.1*d),k*(1-.35*d))}
+gg.setAttribute('color',new THREE.Float32BufferAttribute(gcol,3));gg.computeVertexNormals();
+const ground=new THREE.Mesh(gg,new THREE.MeshStandardMaterial({map:gt,bumpMap:gt,bumpScale:1.5,roughness:1,vertexColors:true}));
+ground.position.y=-1.15;ground.receiveShadow=true;scene.add(ground);
+
+{const lm=new THREE.InstancedMesh(new THREE.CircleGeometry(.09,5).rotateX(-Math.PI/2).scale(1,1,1.5),new THREE.MeshStandardMaterial({roughness:1,side:THREE.DoubleSide}),260),mx=new THREE.Matrix4(),q=new THREE.Quaternion(),e=new THREE.Euler(),c=new THREE.Color();
+  for(let i=0;i<260;i++){let x,z;do{x=(R()-.5)*22;z=(R()-.5)*18-1}while(Math.hypot(x,z)<1.8);
+    q.setFromEuler(e.set((R()-.5)*.4,R()*6.3,(R()-.5)*.4));mx.compose(V(x,-1.13+hf(x,z),z),q,V(.8+R(),1,.8+R()));lm.setMatrixAt(i,mx);lm.setColorAt(i,c.setHSL(.03+R()*.07,.6,.1+R()*.1))}
+  lm.receiveShadow=true;scene.add(lm)}
+const barkM=new THREE.MeshBasicMaterial({color:0x0c0614});
+function br(p,d,l,r,n,grp){const e=p.clone().addScaledVector(d,l),m=new THREE.Mesh(new THREE.CylinderGeometry(r*.7,r,l,5).translate(0,l/2,0),barkM);m.position.copy(p);m.quaternion.setFromUnitVectors(V(0,1,0),d);grp.add(m);
+  if(n>0)for(let i=0,k=2+(R()<.4?1:0);i<k;i++)br(e,d.clone().applyEuler(new THREE.Euler((R()-.5)*1.2,R()*6.3,(R()-.5)*1.2)).lerp(V(0,1,0),.2).normalize(),l*.72,r*.65,n-1,grp)}
+[[-8,-9,1.2],[7.5,-10,1.4],[-1,-14,1.6]].forEach(a=>{const g=new THREE.Group();br(V(0,0,0),V(0,1,0),2.2,.18,5,g);g.position.set(a[0],-1.2+hf(a[0],a[1]),a[1]);g.scale.setScalar(a[2]);scene.add(g)});
+const dirt=[],dgeo=new THREE.IcosahedronGeometry(.07,0),dmat=new THREE.MeshStandardMaterial({color:0x35210f,roughness:1,flatShading:true});
+for(let i=0;i<45;i++){const m=new THREE.Mesh(dgeo,dmat);m.visible=false;m.castShadow=true;m.userData={v:V(0,0,0),r:V(R()*9,R()*9,R()*9),on:false};scene.add(m);dirt.push(m)}
+function spray(){dirt.forEach(m=>{const d=m.userData;m.visible=true;d.on=true;m.position.set((R()-.5)*1.2,-1,(R()-.5)*1.2+.2);m.scale.setScalar(.5+R()*1.5);d.v.set((R()-.5)*5,4+R()*6,(R()-.5)*5)})}
+
+// ---------- gravestones
+const tc=cv(256,256),tx=tc.getContext('2d');tx.fillStyle='#5c5674';tx.fillRect(0,0,256,256);
+for(let i=0;i<3000;i++){tx.fillStyle=R()<.25?`rgba(70,90,50,${R()*.3})`:`rgba(${R()<.5?'20,16,30':'150,140,170'},${R()*.18})`;tx.fillRect(R()*256,R()*256,1+R()*3,1+R()*3)}
+tx.strokeStyle='rgba(15,10,20,.5)';for(let i=0;i<3;i++){tx.beginPath();let x=R()*256,y=0;tx.moveTo(x,y);while(y<256){x+=(R()-.5)*20;y+=14;tx.lineTo(x,y)}tx.stroke()}
+const st=new THREE.CanvasTexture(tc);st.wrapS=st.wrapT=THREE.RepeatWrapping;
+const stoneM=new THREE.MeshStandardMaterial({map:st,bumpMap:st,bumpScale:2,roughness:.95});
+const stones=[];
+function stone(x,z,ry,h){const s=new THREE.Shape();s.moveTo(-.4,0);s.lineTo(.4,0);s.lineTo(.4,h);s.absarc(0,h,.4,0,Math.PI,false);s.lineTo(-.4,0);
+  const g=new THREE.Mesh(new THREE.ExtrudeGeometry(s,{depth:.14,bevelEnabled:true,bevelSize:.04,bevelThickness:.04,bevelSegments:3}),stoneM);
+  g.position.set(x,-1.25+hf(x,z),z);g.rotation.set((R()-.5)*.12,ry,(R()-.5)*.25);g.castShadow=g.receiveShadow=true;g.userData={wob:0,rz:g.rotation.z};stones.push(g);scene.add(g)}
+[[-4.2,-3,.3,.9],[3.9,-4,-.4,1.1],[-2,-6,.1,.8],[6,-2,-.6,.7],[1.8,-7.5,0,1],[-6.5,-6,.5,1.2],[-7,-1,.7,.8],[4.5,-.5,-.3,.6],[-3.4,.8,.5,.5]].forEach(a=>stone(...a));
+
+// ---------- SMOKE: low rolling ground fog (always on, gentle)
+const fogBanks=[];
+for(let i=0;i<34;i++){const s=new THREE.Sprite(new THREE.SpriteMaterial({map:smokeTex,color:i%3?0x8a7ab0:0x6a5a90,transparent:true,opacity:.2,depthWrite:false}));
+  const sc=4+R()*4;s.scale.set(sc,sc*.5,1);s.position.set((R()<.5?-1:1)*(3.8+R()*8),-1.05+R()*.4,-9+R()*7);s.material.rotation=R()*6.3;
+  s.userData={sp:.12+R()*.25,rs:(R()-.5)*.08,ph:R()*6.3,o:.07+R()*.07};scene.add(s);fogBanks.push(s)}
+// ---------- SMOKE: warm smoke that pours out of the grave when the pumpkin pops
+const puffs=[];
+for(let i=0;i<40;i++){const s=new THREE.Sprite(new THREE.SpriteMaterial({map:smokeTex,color:0xc9855a,transparent:true,opacity:0,depthWrite:false}));
+  s.visible=false;s.userData={life:0,max:1,v:V(0,0,0),g:1,rs:0};scene.add(s);puffs.push(s)}
+function puff(big){const s=puffs.find(p=>p.userData.life<=0);if(!s)return;const d=s.userData;
+  d.life=d.max=(big?3.2:4)+R()*2.2;d.g=big?1.8:1.2;d.rs=(R()-.5)*.5;
+  d.v.set((R()-.5)*2.4,.9+R()*.6,-.3-R()*1.6);
+  s.position.set((R()-.5)*.9,-1,-.7+(R()-.5)*.5);s.scale.set(1.2,1.2,1);s.material.rotation=R()*6.3;s.visible=true}
+
+// stars
+const sp=[];for(let i=0;i<260;i++)sp.push((R()-.5)*40,R()*16-1,-12-R()*10);
+const sg=new THREE.BufferGeometry();sg.setAttribute('position',new THREE.Float32BufferAttribute(sp,3));
+const starM=new THREE.PointsMaterial({color:0xffffff,size:.08,fog:false});scene.add(new THREE.Points(sg,starM));
+
+// ---------- pumpkin
+const geo=new THREE.SphereGeometry(1,160,110),P=geo.attributes.position;
+for(let i=0;i<P.count;i++){let x=P.getX(i),y=P.getY(i),z=P.getZ(i);const sT=Math.hypot(x,z),a=Math.atan2(z,x),
+  s=(1+.075*Math.cos(a*10)*sT)*(1+.012*Math.sin(y*9+a*3)+.008*Math.sin(a*7-y*5));
+  x*=s;z*=s;y=y*.84-Math.sign(y)*.16*Math.pow(1-sT,3);P.setXYZ(i,x,y,z)}
+geo.computeVertexNormals();
+const sk=cv(2048,1024),s=sk.getContext('2d');
+let g=s.createLinearGradient(0,0,0,1024);[[0,'#9a3f08'],[.25,'#ff7a12'],[.5,'#ff8a1e'],[.75,'#ee6808'],[1,'#7f3205']].forEach(a=>g.addColorStop(...a));
+s.fillStyle=g;s.fillRect(0,0,2048,1024);
+const mg=s.createLinearGradient(0,560,0,1024);mg.addColorStop(0,'rgba(40,22,10,0)');mg.addColorStop(1,'rgba(40,22,10,.85)');s.fillStyle=mg;s.fillRect(0,560,2048,464);
+for(let i=0;i<300;i++){s.fillStyle=`rgba(45,25,12,${.2+R()*.4})`;s.beginPath();s.ellipse(R()*2048,620+R()*404,3+R()*14,2+R()*10,R()*3,0,7);s.fill()}
+for(let k=0;k<10;k++){const x=(k+.5)/10*2048,gr=s.createLinearGradient(x-50,0,x+50,0);
+  gr.addColorStop(0,'rgba(90,30,0,0)');gr.addColorStop(.5,'rgba(90,30,0,.6)');gr.addColorStop(1,'rgba(90,30,0,0)');s.fillStyle=gr;s.fillRect(x-50,0,100,1024);
+  const x2=k/10*2048,hr=s.createLinearGradient(x2-70,0,x2+70,0);hr.addColorStop(0,'rgba(255,200,110,0)');hr.addColorStop(.5,'rgba(255,200,110,.16)');hr.addColorStop(1,'rgba(255,200,110,0)');s.fillStyle=hr;s.fillRect(x2-70,0,140,1024)}
+for(let i=0;i<3000;i++){s.fillStyle=`rgba(${R()<.5?'255,190,90':'110,40,0'},${.03+R()*.06})`;s.fillRect(R()*2048,R()*1024,1+R()*3,20+R()*90)}
+for(let i=0;i<400;i++){s.fillStyle=`rgba(80,30,0,${.15+R()*.2})`;s.beginPath();s.arc(R()*2048,R()*1024,.8+R()*2.2,0,7);s.fill()}
+const fc=cv(2048,1024),f=fc.getContext('2d'),ec=cv(2048,1024),ex=ec.getContext('2d');
+f.fillStyle='#fff';f.fillRect(0,0,2048,1024);ex.fillStyle='#000';ex.fillRect(0,0,2048,1024);
+const shp=[[[-215,-40],[-80,-30],[-150,-150]],[[80,-30],[215,-40],[150,-150]],[[-18,18],[18,18],[0,-15]],
+ [[-230,65],[-150,55],[-110,125],[-60,70],[0,90],[60,70],[110,125],[150,55],[230,65],[170,170],[80,195],[0,205],[-80,195],[-170,170]]];
+const path=(c,pts)=>{c.beginPath();pts.forEach((p,i)=>c[i?'lineTo':'moveTo'](512+p[0],500+p[1]));c.closePath()};
+[s,f,ex].forEach(c=>c.lineJoin='round');
+shp.forEach(p=>{
+  s.fillStyle=s.strokeStyle='#ffb050';s.lineWidth=30;path(s,p);s.stroke();s.fill();
+  f.fillStyle=f.strokeStyle='#000';f.lineWidth=4;path(f,p);f.fill();f.stroke();
+  ex.shadowColor='#ff7a10';ex.shadowBlur=70;ex.fillStyle=ex.strokeStyle='#ff7a14';ex.lineWidth=30;path(ex,p);ex.stroke();ex.fill()});
+const skin=new THREE.CanvasTexture(sk);skin.anisotropy=aniso;
+const pm=new THREE.MeshPhysicalMaterial({map:skin,bumpMap:skin,bumpScale:3.5,roughness:.5,clearcoat:.25,clearcoatRoughness:.5,
+  emissive:0xff6a0c,emissiveMap:new THREE.CanvasTexture(ec),emissiveIntensity:0,alphaMap:new THREE.CanvasTexture(fc),alphaTest:.5});
+const pumpkin=new THREE.Group(),body=new THREE.Mesh(geo,pm);body.castShadow=true;pumpkin.add(body);
+const inn=new THREE.Mesh(geo,new THREE.MeshBasicMaterial({map:(()=>{const c=cv(512,256),x=c.getContext('2d');x.fillStyle='#ff7a14';x.fillRect(0,0,512,256);for(let i=0;i<500;i++){x.strokeStyle=`rgba(${R()<.5?'255,170,50':'170,60,0'},${.15+R()*.3})`;x.lineWidth=1+R()*2;x.beginPath();const a=R()*512;x.moveTo(a,0);x.bezierCurveTo(a+R()*30-15,80,a+R()*30-15,170,a+R()*20-10,256);x.stroke()}return new THREE.CanvasTexture(c)})(),color:0xff8a30,side:THREE.BackSide}));inn.scale.setScalar(.93);pumpkin.add(inn);
+const stg=new THREE.LatheGeometry([[.17,0],[.13,.1],[.1,.3],[.095,.5],[.13,.58],[.1,.62],[0,.62]].map(p=>new THREE.Vector2(...p)),10),stp=stg.attributes.position,stc=[];
+for(let i=0;i<stp.count;i++){const y=stp.getY(i),k=1+.12*Math.cos(Math.atan2(stp.getZ(i),stp.getX(i))*5);
+  stp.setX(i,stp.getX(i)*k+.25*y*y);stp.setZ(i,stp.getZ(i)*k);stc.push(.3+y*.3,.4-y*.15,.12)}
+stg.setAttribute('color',new THREE.Float32BufferAttribute(stc,3));stg.computeVertexNormals();
+const stem=new THREE.Mesh(stg,new THREE.MeshStandardMaterial({vertexColors:true,roughness:.9}));stem.position.y=.55;stem.rotation.z=-.03;stem.castShadow=true;pumpkin.add(stem);
+const core=new THREE.Sprite(new THREE.SpriteMaterial({map:glow,color:0xff7a14,blending:THREE.AdditiveBlending,transparent:true,depthWrite:false}));core.position.z=.2;pumpkin.add(core);
+// soft orange light spill on the ground in front of the pumpkin
+const gGlow=new THREE.Mesh(new THREE.CircleGeometry(3.4,48).rotateX(-Math.PI/2),new THREE.MeshBasicMaterial({map:glow,color:0xff6a14,transparent:true,opacity:0,blending:THREE.AdditiveBlending,depthWrite:false,fog:false}));
+gGlow.position.set(0,-.8,1);scene.add(gGlow);
+const inner=new THREE.PointLight(0xff6a0a,0,9);pumpkin.add(inner);
+const front=new THREE.PointLight(0xff5e08,0,12);front.position.set(0,-.1,1.8);pumpkin.add(front);
+scene.add(pumpkin);
+
+// ---------- bats
+const batMat=new THREE.MeshStandardMaterial({color:0x24143a,roughness:.8,side:THREE.DoubleSide,emissive:0x1a0a22,emissiveIntensity:.6});
+const furMat=new THREE.MeshStandardMaterial({color:0x1a1024,roughness:1});
+const lineM=new THREE.LineBasicMaterial({color:0x0a0510});
+const wg=pts=>{const sh=new THREE.Shape();pts.forEach((p,i)=>i?sh.lineTo(p[0],p[1]):sh.moveTo(p[0],p[1]));return new THREE.ShapeGeometry(sh).rotateX(Math.PI/2)};
+const inG=wg([[0,.12],[.5,.16],[.7,-.38],[0,-.3]]);
+const outG=wg([[0,0],[.5,.14],[.4,-.02],[.62,-.2],[.44,-.22],[.44,-.46],[.28,-.34],[.2,-.54]]);
+const line=pts=>new THREE.LineSegments(new THREE.BufferGeometry().setFromPoints(pts),lineM);
+const fingers=line([[.5,.14],[.62,-.2],[.44,-.46],[.2,-.54]].flatMap(p=>[V(0,0,0),V(p[0],0,p[1])])),arm=line([V(0,0,.12),V(.5,0,.16)]);
+const eyeM=new THREE.MeshBasicMaterial({color:0xff3030});
+const bats=[];
+for(let i=0;i<14;i++){
+  const b=new THREE.Group(),bd=new THREE.Mesh(new THREE.SphereGeometry(.13,10,8),furMat);bd.scale.set(.8,.8,1.5);b.add(bd);
+  const head=new THREE.Mesh(new THREE.SphereGeometry(.08,8,6),furMat);head.position.z=.2;b.add(head);
+  [-1,1].forEach(sd=>{const ear=new THREE.Mesh(new THREE.ConeGeometry(.03,.1,4),furMat);ear.position.set(sd*.04,.09,.21);b.add(ear);
+    const e=new THREE.Mesh(new THREE.SphereGeometry(.014,6,4),eyeM);e.position.set(sd*.03,.03,.27);b.add(e)});
+  const wings=[1,-1].map(sd=>{const w=new THREE.Group(),o=new THREE.Group();o.position.set(.5,0,.16);
+    o.add(new THREE.Mesh(outG,batMat),fingers.clone());w.add(new THREE.Mesh(inG,batMat),arm.clone(),o);w.scale.x=sd;w.position.x=sd*.08;b.add(w);return{w,o,sd}});
+  b.userData={wings,A:2+R()*2.4,h:R()*1.4-.3,sp:.5+R()*.55,p1:R()*6.3,p2:R()*6.3,p3:R()*6.3,s:.4+R()*.25,fs:13+R()*5,ph:R()*6.3};
+  b.visible=false;scene.add(b);bats.push(b)}
+const bp=(d,t,o)=>{const w=t*d.sp;return o.set(Math.sin(w*.9+d.p1)*d.A,1+d.h+Math.sin(w*1.3+d.p2)*.9,Math.sin(w*.7+d.p3)*2.4-.2)};
+const tmpA=V(0,0,0),tmpB=V(0,0,0),mouth=V(0,0,.9);
+
+// ---------- sparks (only a burst when the pumpkin pops)
+const M=100,spPos=new Float32Array(M*3).fill(-100),spCol=new Float32Array(M*3),spVel=[],spLife=new Float32Array(M);
+for(let i=0;i<M;i++)spVel.push(V(0,0,0));
+const spg=new THREE.BufferGeometry();spg.setAttribute('position',new THREE.BufferAttribute(spPos,3));spg.setAttribute('color',new THREE.BufferAttribute(spCol,3));
+scene.add(new THREE.Points(spg,new THREE.PointsMaterial({map:glow,size:.2,vertexColors:true,transparent:true,depthWrite:false,blending:THREE.AdditiveBlending})));
+function emit(n,x,y,z){for(let i=0;i<M&&n>0;i++)if(spLife[i]<=0){n--;spLife[i]=.6+R()*.8;spPos.set([x+(R()-.5)*.8,y,z+(R()-.5)*.8],i*3);
+  spVel[i].set((R()-.5)*4,2+R()*4,(R()-.5)*4)}}
+
+// ---------- state
+const REST=-.38,clock=new THREE.Clock();let state=0,t0=0,py=REST-2.8,vy=0,sq=0,sqv=0,bk=0,shake=0,lt=0;const ptr={x:0,y:0};
+let excite=0,bt=0,mxs=0,mys=0;
+addEventListener('pointermove',e=>{ptr.x=e.clientX/innerWidth-.5;ptr.y=e.clientY/innerHeight-.5});
+const $=id=>document.getElementById(id);
+function pop(){state=1;t0=clock.elapsedTime;py=REST-2.2;vy=13;bk=0;shake=.12;lt=1;
+  $('intro').classList.add('gone');
+  const fl=$('flash');fl.classList.remove('go');void fl.offsetWidth;fl.classList.add('go');
+  const b=$('boo');b.style.opacity='';b.classList.remove('show');void b.offsetWidth;setTimeout(()=>b.classList.add('show'),350);
+  emit(70,0,-1.1,.3);spray();for(let i=0;i<26;i++)puff(true);
+  setTimeout(()=>{if(state===1)$('out').classList.add('show')},1800)}
+function dismiss(){state=2;$('out').classList.remove('show');$('boo').classList.remove('show');$('boo').style.opacity=0;
+  setTimeout(()=>{$('intro').classList.remove('gone');state=0},900)}
+$('open').onclick=pop;$('close').onclick=dismiss;
+// ---------- interaction: click the pumpkin = it hops; moving the mouse = bats drift with it
+const cvs=$('c'),ray=new THREE.Raycaster(),ndc=new THREE.Vector2();
+function onPumpkin(e){ndc.set(e.clientX/innerWidth*2-1,-(e.clientY/innerHeight)*2+1);ray.setFromCamera(ndc,camera);return ray.intersectObject(body).length>0}
+cvs.addEventListener('pointerdown',e=>{if(state===1&&py<=REST+.02&&onPumpkin(e))vy=5.5});
+cvs.addEventListener('pointermove',e=>{cvs.style.cursor=state===1&&onPumpkin(e)?'pointer':'default'});
+function resize(){const w=innerWidth,h=innerHeight;renderer.setSize(w,h,false);camera.aspect=w/h;camera.position.z=w/h<.8?9.5:6.4;camera.updateProjectionMatrix()}
+addEventListener('resize',resize);resize();
+
+function tick(){
+  const dt=Math.min(clock.getDelta(),.05),t=clock.elapsedTime,since=t-t0;
+  if(state===1){
+    vy-=24*dt;py+=vy*dt;
+    if(py<REST&&vy<0){const imp=-vy;py=REST;vy=imp>2.5?imp*.38:0;
+      if(imp>2.5){sqv=-imp*.8;shake=Math.max(shake,imp*.01);emit(Math.round(imp*3),0,-1.1,.5);for(let i=0;i<5;i++)puff(true)}}
+    if(since>.5)bk=Math.min(1,bk+dt/1.3);
+    if(R()<dt*.15)lt=1;
+  }else if(state===2){py+=((REST-2.8)-py)*Math.min(1,dt*6);bk=Math.max(0,bk-dt*2.5)}
+  sqv+=(-sq*180-sqv*12)*dt;sq+=sqv*dt;
+  const stretch=py>REST+.01?clamp(vy*.012,-.1,.15):0,sy=1+sq+stretch,sx=1/Math.sqrt(sy);
+  pumpkin.visible=py>REST-2.7;
+  pumpkin.scale.set(sx,sy,sx);
+  pumpkin.position.y=py+.84*(sy-1);
+  pumpkin.rotation.y=(1-clamp((py-(REST-2.2))/2.2))*Math.PI*2+Math.sin(t*.8)*.05;
+  pumpkin.rotation.z=Math.sin(t*1.1)*.03;
+
+  const vis=clamp((py-(REST-2.2))/1.4),fl=.85+.15*Math.sin(t*17)*Math.sin(t*5.3)+.07*Math.sin(t*41);
+  inner.intensity=vis*1.6*fl;front.intensity=vis*.9*fl;gGlow.material.opacity=vis*.14*fl;pm.emissiveIntensity=vis*.5*fl;
+  core.scale.set(1.3*fl,1.3*fl,1);core.material.opacity=.55;
+
+  // lightning flicker
+  lt*=Math.pow(.0005,dt);const flick=lt*(.6+.4*Math.sin(t*60));
+  ambient.intensity=.55+flick*2.2;moonLight.intensity=.9+flick*1.5;starM.size=.08+flick*.05;
+
+  excite*=Math.pow(.25,dt);bt+=dt*(1+excite*2.5);mxs+=(ptr.x-mxs)*Math.min(1,dt*3);mys+=(ptr.y-mys)*Math.min(1,dt*3);
+  stones.forEach(g=>{const d=g.userData;if(d.wob>.001){d.wob*=Math.pow(.02,dt);g.rotation.z=d.rz+Math.sin(t*28)*.12*d.wob}else g.rotation.z=d.rz});
+  bats.forEach(b=>{const d=b.userData;b.visible=bk>.01;if(!b.visible)return;
+    const e=ease(bk);const ox=mxs*(3+d.s*4)*(d.ph>3.1?-1:1),oy=mys*2.2;bp(d,bt,tmpA);tmpA.x+=ox;tmpA.y-=oy;b.position.copy(mouth).lerp(tmpA,e);b.position.y+=py-REST+Math.sin(t*d.fs+d.ph)*.05;
+    bp(d,bt+.06,tmpB);tmpB.x+=ox;tmpB.y-=oy;tmpB.sub(tmpA).multiplyScalar(5);tmpB.z+=.001;b.lookAt(b.position.clone().add(tmpB));
+    b.rotateZ(-Math.sin(t*d.sp*.9+d.p1)*.4*e);
+    b.scale.setScalar(d.s*Math.min(1,bk*3)+.0001);
+    const fw=Math.sin(t*d.fs+d.ph);d.wings.forEach(w=>{w.w.rotation.z=(fw*.75+.1)*w.sd;w.o.rotation.z=Math.sin(t*d.fs+d.ph-1)*.55})});
+
+  dirt.forEach(m=>{const d=m.userData;if(!d.on)return;d.v.y-=16*dt;m.position.addScaledVector(d.v,dt);const gy=-1.12+hf(m.position.x,m.position.z)+.03;
+    if(m.position.y<gy){m.position.y=gy;d.on=false}else{m.rotation.x+=d.r.x*dt;m.rotation.y+=d.r.y*dt}});
+
+  // smoke update
+  fogBanks.forEach(c=>{const d=c.userData;c.position.x+=Math.sin(t*.15+d.ph)*dt*.4;c.material.rotation+=dt*d.rs;
+    c.material.opacity=d.o*(.85+.15*Math.sin(t*.4+d.ph))});
+  puffs.forEach(p=>{const d=p.userData;if(d.life<=0)return;d.life-=dt;if(d.life<=0){p.visible=false;return}
+    const k=1-d.life/d.max;p.position.addScaledVector(d.v,dt);d.v.multiplyScalar(1-dt*.5);d.v.y+=dt*.05;
+    const sc=1.2+k*3.4*d.g;p.scale.set(sc,sc,1);p.material.rotation+=d.rs*dt;
+    p.material.opacity=.26*Math.sin(Math.PI*Math.pow(k,.7))*(1-k*.3);
+    p.material.color.setHex(k<.3?0xe89a60:0x9a8aa8)});
+  for(let i=0;i<M;i++){if(spLife[i]>0){spLife[i]-=dt;const v=spVel[i];v.y-=9*dt;
+      spPos[i*3]+=v.x*dt;spPos[i*3+1]+=v.y*dt;spPos[i*3+2]+=v.z*dt;
+      if(spPos[i*3+1]<-1.1){spPos[i*3+1]=-1.1;v.y*=-.3}
+      const c=clamp(spLife[i]);spCol.set([c,c*.55,c*.15],i*3)}else{spPos[i*3+1]=-100}}
+  spg.attributes.position.needsUpdate=spg.attributes.color.needsUpdate=true;
+
+  clouds.forEach(c=>{c.position.x+=dt*.25;if(c.position.x>12)c.position.x=-12});
+  moon.rotation.y+=dt*.01;
+
+  shake*=Math.pow(.02,dt);
+  camera.position.x+=((ptr.x*1.2)-camera.position.x)*.05;camera.position.y+=((.9-ptr.y*.8)-camera.position.y)*.05;
+  camera.lookAt(0,.3,0);camera.position.x+=(R()-.5)*shake;camera.position.y+=(R()-.5)*shake;
+  renderer.render(scene,camera);requestAnimationFrame(tick)}
+tick();
+</script>
+
+</body></html>
